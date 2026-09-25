@@ -27,10 +27,10 @@ def point(value: dict) -> tuple[float, float]:
     return float(value["X"]), float(value["Y"])
 
 
-def apply_roadstar_polyline_compatibility(target: Path) -> None:
-    """Match the observed RoadStar dxflib 3.17 LWPOLYLINE vertex convention.
+def apply_dxflib_polyline_compatibility(target: Path) -> None:
+    """Match the dxflib 3.17 LWPOLYLINE vertex convention.
 
-    RoadStar emits code 30 = 0.0 after every x/y vertex in its open lightweight
+    dxflib emits code 30 = 0.0 after every x/y vertex in its open lightweight
     polylines.  Although elevation is normally optional for planar LWPOLYLINE,
     retaining it makes the exported spiral structurally align with the known
     ZWCAD-compatible reference output.
@@ -68,8 +68,8 @@ def apply_roadstar_polyline_compatibility(target: Path) -> None:
 
 def write(payload: dict) -> dict:
     target = Path(payload["target_path"])
-    # RoadStar statically links dxflib 3.17 and its actual export sample is AC1015
-    # with a complete TABLES/BLOCKS/OBJECTS structure and open LWPOLYLINE entities.
+    # dxflib 3.17 export samples are AC1015 with a complete
+    # TABLES/BLOCKS/OBJECTS structure and open LWPOLYLINE entities.
     # ezdxf writes the same R2000 structural baseline rather than a hand-crafted
     # partial ENTITIES section.
     doc = ezdxf.new("R2000", setup=True)
@@ -108,7 +108,7 @@ def write(payload: dict) -> dict:
                 close=False,
                 dxfattribs={
                     "layer": layer,
-                    # Match RoadStar's dxflib sample: explicit visible colour,
+                    # Match the dxflib sample: explicit visible colour,
                     # true colour, Continuous linetype, lineweight and scale.
                     "color": 6,
                     "true_color": 16711935,
@@ -122,7 +122,7 @@ def write(payload: dict) -> dict:
 
     target.parent.mkdir(parents=True, exist_ok=True)
     doc.saveas(target)
-    apply_roadstar_polyline_compatibility(target)
+    apply_dxflib_polyline_compatibility(target)
     return {"target_path": str(target), "dxfversion": doc.dxfversion, "counts": counts}
 
 

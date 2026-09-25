@@ -239,7 +239,6 @@ Excel 导出固定为 **无表头八列**：
 | `pwsh -NoProfile -Sta -File .\RoadCurveImporter.ps1 -LayoutSelfTest` | 响应式布局 | `LAYOUT_SELFTEST_OK`。 |
 | `pwsh -NoProfile -Sta -File .\RoadCurveImporter.ps1 -DxfCadRestoreSelfTest` | 原始 CAD 坐标、圆弧与拟合 DXF | 输出 `FittedLWPOLYLINE(161 vertices)`。 |
 | `python .\validate_dxf_ezdxf.py .\selftest_cad_restore.dxf` | 标准解析器独立验证 | `valid=true`、AC1015、开放 LWPOLYLINE 与 `ROAD_SPIRAL_POLYLINE`。 |
-| `python .\tests\compare_roadstar_dxf_structure.py <道路之星参考.dxf> .\selftest_cad_restore.dxf .\compare.json` | 道路之星 dxflib 格式基线比较 | `passed=true`。 |
 | `pwsh -NoProfile -Sta -File .\tests\test_complex_spiral_fitted_dxf.ps1 -CandidatePath .\RoadCurveImporter.ps1` | 拟合 DXF | 16 条折线、801–802 顶点、最大段长 ≤ 0.25 m（需自备 `high_vertex_polyline_inspection.json`）。 |
 | `pwsh -NoProfile -Sta -File .\RoadCurveImporter.ps1 -SelfTest` | 基本读取、填充线、DXF | 输出 `SELFTEST_OK` 与 `GAP_FILL_SELFTEST_OK`。 |
 
@@ -313,10 +312,8 @@ Copy-Item .\RoadCurveImporter.ps1.before_preview_dxf_fix_20260824_221821 .\RoadC
 - [标准 DXF 写出器](./dxf_writer.py)
 - [标准 DXF 独立验证器](./validate_dxf_ezdxf.py)
 - [复杂图拟合 DXF 回归脚本](./tests/test_complex_spiral_fitted_dxf.ps1)（需自备 `high_vertex_polyline_inspection.json`）
-- [道路之星结构对比器](./tests/compare_roadstar_dxf_structure.py)
 - [隔离 DXF 打开测试](./tests/test_dxf_open_isolated.ps1)
 - [真实 SouthMap/ZWCAD 验收记录](./real_cad_visual_acceptance_20260825.md)
-- [道路之星 DXF 审计](./RoadStar_DXF_导出审计.md)
 
 这些文件组成可复现的维护基线。后续功能修改应先从正式脚本复制候选文件，完成专项回归后再进行原子发布。
 
