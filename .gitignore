@@ -1,0 +1,29 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# ---- PowerShell ----
+*.log
+*.before_*
+*.atomic_replace_*
+*.next
+*.bak
+*.reg
+
+# ---- 运行时/自测产物 ----
+selftest_*.dxf
+selftest_*.json
+compare.json
+high_vertex_polyline_inspection.json
+*.tmp
+
+# ---- 系统/编辑器 ----
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/

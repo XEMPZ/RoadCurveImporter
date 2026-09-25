@@ -1,0 +1,6 @@
+{
+  "endpointConnectionToleranceMm": 1.0,
+  "looseSpiralFitToleranceMm": 2.0,
+  "surveyorExportDigits": 6,
+  "notes": "endpointConnectionToleranceMm 为端点自动连接平面距离阈值（mm）；其中距离小于 0.1 mm 的端点视为直接相连，不另写填充线；looseSpiralFitToleranceMm 为宽松欧拉回旋线验收最大拟合偏差（mm，默认 2）；严格欧拉回旋线验收固定为 0.5 mm，不能修改；surveyorExportDigits 为测量员八列 Excel 小数位，必须不低于 6。修改本文件后重启程序生效。"
+}
