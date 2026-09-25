@@ -25,6 +25,33 @@ public static class ReadOnlyRot {
 }
 '@
 }
+if (-not ('CadWindowProbe' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class CadWindowProbe {
+  public delegate bool EnumChildProc(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr hWndParent, EnumChildProc lpEnumFunc, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+
+  // Returns the handle of the active MDI document child of an MFC CAD main window.
+  public static IntPtr GetActiveMdiChild(IntPtr mainHwnd) {
+    IntPtr mdiClient = IntPtr.Zero;
+    EnumChildWindows(mainHwnd, (h, lp) => {
+      StringBuilder sb = new StringBuilder(64);
+      GetClassName(h, sb, 64);
+      if (sb.ToString() == "MDICLIENT") { mdiClient = h; return false; }
+      return true;
+    }, IntPtr.Zero);
+    if (mdiClient == IntPtr.Zero) return IntPtr.Zero;
+    // WM_MDIGETACTIVE = 0x0227; return value is the active MDI child HWND.
+    return SendMessage(mdiClient, 0x0227, IntPtr.Zero, IntPtr.Zero);
+  }
+}
+'@
+}
 
 $script:Tau = 2.0 * [Math]::PI
 $script:DefaultTolerance = 0.001
@@ -41,6 +68,7 @@ $script:MaxSpiralFitVertices = 600
 $script:MaxSpiralFitDurationSeconds = 5
 $script:SpiralFitAttemptCount = 0
 $script:SpiralFitServer = $null
+$script:PythonInterpreter = $null
 $script:MaxPreviewElementShapes = 1600
 $script:MaxPreviewVerticesPerCurve = 900
 $script:MaxProgressTextCharacters = 18000
@@ -93,6 +121,61 @@ function Get-ActiveComApplication([string]$progId) {
     if([string]::IsNullOrWhiteSpace($clsidText)){return $null}
     try {$obj=$null;$guid=[Guid]$clsidText;[ReadOnlyRot]::GetActiveObject([ref]$guid,[IntPtr]::Zero,[ref]$obj);return $obj} catch {return $null}
 }
+function Get-PythonInterpreter {
+    if($null -ne $script:PythonInterpreter){return $script:PythonInterpreter}
+    $trials=[System.Collections.Generic.List[object]]::new()
+    $pyLauncher=Get-Command py -ErrorAction SilentlyContinue|Select-Object -First 1
+    if($null -ne $pyLauncher){
+        [void]$trials.Add([pscustomobject]@{File=[string]$pyLauncher.Source;Prefix=@('-3.13')})
+        [void]$trials.Add([pscustomobject]@{File=[string]$pyLauncher.Source;Prefix=@('-3')})
+        [void]$trials.Add([pscustomobject]@{File=[string]$pyLauncher.Source;Prefix=@()})
+    }
+    $pythonCmd=Get-Command python -ErrorAction SilentlyContinue|Select-Object -First 1
+    if($null -ne $pythonCmd){[void]$trials.Add([pscustomobject]@{File=[string]$pythonCmd.Source;Prefix=@()})}
+    foreach($trial in $trials){
+        try {
+            $probe=[System.Diagnostics.ProcessStartInfo]::new()
+            $probe.FileName=$trial.File
+            foreach($prefixArg in $trial.Prefix){[void]$probe.ArgumentList.Add($prefixArg)}
+            [void]$probe.ArgumentList.Add('-c');[void]$probe.ArgumentList.Add('import ezdxf,numpy,scipy')
+            $probe.UseShellExecute=$false;$probe.CreateNoWindow=$true
+            $probe.RedirectStandardOutput=$true;$probe.RedirectStandardError=$true
+            $probeProcess=[System.Diagnostics.Process]::new();$probeProcess.StartInfo=$probe
+            if($probeProcess.Start() -and $probeProcess.WaitForExit(10000) -and $probeProcess.ExitCode -eq 0){
+                $script:PythonInterpreter=$trial
+                return $trial
+            }
+        } catch {}
+    }
+    return $null
+}
+function ConvertTo-WindowHandle($value) {
+    if($null -eq $value){return [IntPtr]::Zero}
+    if($value -is [IntPtr]){return $value}
+    return [IntPtr][int64]$value
+}
+function Get-ActiveCadDocument($app) {
+    $active=$null
+    try {$active=$app.ActiveDocument} catch {}
+    $activeChild=[IntPtr]::Zero
+    try {
+        $mainHandle=ConvertTo-WindowHandle $app.HWND
+        if($mainHandle -ne [IntPtr]::Zero){$activeChild=[CadWindowProbe]::GetActiveMdiChild($mainHandle)}
+    } catch {}
+    if($activeChild -ne [IntPtr]::Zero){
+        foreach($doc in $app.Documents){
+            $docHandles=[System.Collections.Generic.List[IntPtr]]::new()
+            try {[void]$docHandles.Add((ConvertTo-WindowHandle $doc.HWND))} catch {}
+            try {foreach($win in $doc.Windows){[void]$docHandles.Add((ConvertTo-WindowHandle $win.HWND))}} catch {}
+            if($docHandles.Contains($activeChild)){
+                if($null -ne $active){try{if([string]$doc.Name -ne [string]$active.Name){$script:Diagnostics.Add(('COM ActiveDocument 报告“{0}”，但 CAD 当前标签窗口为“{1}”；已按当前标签读取。' -f $active.Name,$doc.Name))}}catch{}}
+                return $doc
+            }
+        }
+    }
+    if($null -ne $active){return $active}
+    throw '无法确定 CAD 当前活动标签页；请单击目标标签后重试。'
+}
 function Get-RunningCadApplication {
     $mode=0;try{$mode=[int]$HostSelector.SelectedIndex}catch{}
     $candidates=switch($mode) {
@@ -105,7 +188,7 @@ function Get-RunningCadApplication {
     throw '没有找到所选 CAD 的活动 COM 会话。请启动完整 Windows 版 AutoCAD 或 SouthMap/ZWCAD，并确认其与本程序处于相同权限级别。'
 }
 function Update-HostStatus {
-    try {$cadHost=Get-RunningCadApplication;$doc=$cadHost.Application.ActiveDocument;$HostStatusText.Text=('{0} · {1} · {2}' -f $cadHost.Name,$cadHost.Version,$doc.Name);$HostStatusText.Foreground=[System.Windows.Media.Brushes]::SeaGreen;$StatusText.Text=('已连接：{0}。仅读取，不写入图形。' -f $HostStatusText.Text)} catch {$HostStatusText.Text='未检测到所选 CAD 会话';$HostStatusText.Foreground=[System.Windows.Media.Brushes]::IndianRed;$StatusText.Text='请启动完整 Windows 版 CAD，或在“CAD 主机”中切换后刷新。'}
+    try {$cadHost=Get-RunningCadApplication;$doc=Get-ActiveCadDocument $cadHost.Application;$HostStatusText.Text=('{0} · {1} · {2}' -f $cadHost.Name,$cadHost.Version,$doc.Name);$HostStatusText.Foreground=[System.Windows.Media.Brushes]::SeaGreen;$StatusText.Text=('已连接：{0}。仅读取，不写入图形。' -f $HostStatusText.Text)} catch {$HostStatusText.Text='未检测到所选 CAD 会话';$HostStatusText.Foreground=[System.Windows.Media.Brushes]::IndianRed;$StatusText.Text='请启动完整 Windows 版 CAD，或在“CAD 主机”中切换后刷新。'}
 }
 function Test-CadCoordinateSwap {
     try {return [bool]$script:CurrentSettings.SwapCadXY} catch {return $true}
@@ -214,10 +297,11 @@ function Start-SpiralFitServer {
     if($null -eq $script:SpiralFitterPath -or -not (Test-Path -LiteralPath $script:SpiralFitterPath)){return $false}
     $serverPath=Join-Path $PSScriptRoot 'spiral_fitter_server.py'
     if(-not (Test-Path -LiteralPath $serverPath)){return $false}
-    $python=Get-Command python -ErrorAction SilentlyContinue|Select-Object -First 1
-    if($null -eq $python){$script:Diagnostics.Add('未检测到 Python；高节点折线不会被合并为欧拉回旋线。');return $false}
+    $interpreter=Get-PythonInterpreter
+    if($null -eq $interpreter){$script:Diagnostics.Add('未检测到含 numpy/scipy 的 Python；请先执行 pip install -r requirements.txt。高节点折线不会被合并为欧拉回旋线。');return $false}
     try {
-        $psi=[System.Diagnostics.ProcessStartInfo]::new();$psi.FileName=[string]$python.Source;$psi.WorkingDirectory=$PSScriptRoot;$psi.UseShellExecute=$false;$psi.CreateNoWindow=$true;$psi.RedirectStandardInput=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
+        $psi=[System.Diagnostics.ProcessStartInfo]::new();$psi.FileName=[string]$interpreter.File;$psi.WorkingDirectory=$PSScriptRoot;$psi.UseShellExecute=$false;$psi.CreateNoWindow=$true;$psi.RedirectStandardInput=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
+        foreach($prefixArg in $interpreter.Prefix){[void]$psi.ArgumentList.Add($prefixArg)}
         [void]$psi.ArgumentList.Add('-u');[void]$psi.ArgumentList.Add($serverPath);[void]$psi.ArgumentList.Add([string]$script:SpiralFitterPath)
         $process=[System.Diagnostics.Process]::new();$process.StartInfo=$psi
         if(-not $process.Start()){throw '无法启动持久欧拉回旋线拟合进程。'}
@@ -637,8 +721,12 @@ function Invoke-StandardDxfWriter([string]$targetPath) {
     }
     $payload=[pscustomobject]@{target_path=$targetPath;elements=@($outbound)}
     $json=$payload|ConvertTo-Json -Depth 12 -Compress
+    $interpreter=Get-PythonInterpreter
+    if($null -eq $interpreter){throw '未找到含 ezdxf 的 Python；请先执行 pip install -r requirements.txt。'}
     $psi=[System.Diagnostics.ProcessStartInfo]::new()
-    $psi.FileName='python';$psi.Arguments=('"{0}"' -f $writerPath);$psi.UseShellExecute=$false
+    $psi.FileName=[string]$interpreter.File;$psi.UseShellExecute=$false
+    foreach($prefixArg in $interpreter.Prefix){[void]$psi.ArgumentList.Add($prefixArg)}
+    [void]$psi.ArgumentList.Add($writerPath)
     $psi.RedirectStandardInput=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true;$psi.CreateNoWindow=$true
     $process=[System.Diagnostics.Process]::new();$process.StartInfo=$psi
     if(-not $process.Start()){throw '无法启动标准 DXF 写出器。'}
@@ -678,7 +766,7 @@ function Export-Excel([string]$targetPath) {
 }
 
 [xml]$xaml=@'
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="道路曲线要素导入器" Height="760" Width="1280" MinHeight="650" MinWidth="700" FontFamily="Microsoft YaHei UI" FontSize="12" Background="#F3F6F9" WindowStartupLocation="CenterScreen" UseLayoutRounding="True" SnapsToDevicePixels="True">
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="道路曲线要素导入器 v1.1" Height="760" Width="1280" MinHeight="650" MinWidth="700" FontFamily="Microsoft YaHei UI" FontSize="12" Background="#F3F6F9" WindowStartupLocation="CenterScreen" UseLayoutRounding="True" SnapsToDevicePixels="True">
 <Grid x:Name="AppRoot" Margin="8" MinWidth="492"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*" MinHeight="245"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
 <Border Background="White" BorderBrush="#DCE5ED" BorderThickness="1" CornerRadius="9" Padding="9"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="250"/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="道路曲线要素导入" FontSize="20" FontWeight="SemiBold" Foreground="#163B61"/><TextBlock Text="按 CAD 选择或读取当前显示图层；全过程仅读取几何，不修改、保存或关闭图形。" Foreground="#60717F" Margin="0,5,0,0" TextWrapping="Wrap"/></StackPanel><Border Grid.Column="1" Background="#F6FAFF" BorderBrush="#D4E6F7" BorderThickness="1" CornerRadius="6" Padding="9"><StackPanel><TextBlock Text="当前 CAD 连接" FontWeight="SemiBold" Foreground="#24567C"/><TextBlock x:Name="HostStatusText" Text="正在检测…" TextWrapping="Wrap" Margin="0,3,0,0" FontSize="12"/></StackPanel></Border></Grid></Border>
 <Border Grid.Row="1" Margin="0,6,0,6" Background="White" BorderBrush="#DCE5ED" BorderThickness="1" CornerRadius="9" Padding="7"><Grid x:Name="ControlGrid"><Grid.ColumnDefinitions><ColumnDefinition Width="1.45*"/><ColumnDefinition Width="1.20*"/><ColumnDefinition Width="1.05*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -689,11 +777,11 @@ function Export-Excel([string]$targetPath) {
 </Grid></Border>
 <Grid x:Name="ContentGrid" Grid.Row="2"><Grid.ColumnDefinitions><ColumnDefinition Width="2.2*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="1*"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="*"/></Grid.RowDefinitions><Border x:Name="TablePanel" Background="White" BorderBrush="#DCE5ED" BorderThickness="1" CornerRadius="9" Padding="8"><DockPanel><Grid DockPanel.Dock="Top" Margin="2,0,2,7"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="道路要素表" FontWeight="SemiBold" FontSize="15" Foreground="#163B61"/><TextBlock Text="核验预览：末尾灰色列为自动识别/计算结果；固定八列 Excel 仍为 8 列无表头。表中全部方位角采用 dd.mmss（度分秒编码）。" FontSize="11" Foreground="#6E7F8C" Margin="0,2,0,0" TextWrapping="Wrap"/></StackPanel><CheckBox x:Name="SurveyorPreviewBox" Grid.Column="1" Content="查看测量员格式预览" VerticalAlignment="Center" ToolTip="勾选后显示含线型、dd.mmss 方位角和灰色终点核验列的扩展预览；Excel 导出仍为固定无表头八列，且第 5 列方位角同样采用 dd.mmss。"/></Grid><DataGrid x:Name="ElementGrid" AutoGenerateColumns="True" IsReadOnly="True" CanUserAddRows="False" GridLinesVisibility="Horizontal" AlternatingRowBackground="#F6FAFD" HeadersVisibility="Column" MinHeight="180" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Auto" EnableRowVirtualization="True" EnableColumnVirtualization="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"/></DockPanel></Border>
 <Border x:Name="PreviewPanel" Grid.Column="2" Background="White" BorderBrush="#DCE5ED" BorderThickness="1" CornerRadius="9" Padding="8"><Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*" MinHeight="150"/><RowDefinition Height="Auto"/></Grid.RowDefinitions><Grid Grid.Row="0" Margin="3"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><StackPanel><TextBlock Text="线路示意图" FontWeight="SemiBold" FontSize="15" Foreground="#163B61"/><TextBlock Text="绿色为起点，红色为终点，橙色虚线为端点容差填充；左键拖拽平移。" FontSize="10" Foreground="#6E7F8C" Margin="0,2,0,0" TextWrapping="Wrap"/></StackPanel><StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"><TextBlock Text="滚轮缩放 25%–1000%" FontSize="10" Foreground="#6E7F8C" VerticalAlignment="Center" Margin="0,0,6,0"/><Button x:Name="ResetZoomButton" Content="复位视图" ToolTip="同时复位缩放比例和拖拽位置" Padding="7,3"/></StackPanel></Grid><Border Grid.Row="1" BorderBrush="#E3EAF0" BorderThickness="1" Margin="0,5,0,8"><Canvas x:Name="PreviewCanvas" Background="#FCFDFE" MinHeight="150" ClipToBounds="True" Cursor="Hand"/></Border><Border Grid.Row="2" Background="#FFF8DE" BorderBrush="#F1DF95" BorderThickness="1" Padding="8" MinHeight="142"><Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions><TextBlock Text="运行诊断与工作进度" FontWeight="SemiBold" Foreground="#735A00" Margin="1,0,1,5"/><TextBox x:Name="DiagnosticText" Grid.Row="1" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Height="48" Background="Transparent" BorderThickness="0" Foreground="#735A00" Padding="1"/><TextBox x:Name="ProgressBox" Grid.Row="2" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Height="62" Background="Transparent" BorderBrush="#E7D795" BorderThickness="1" Foreground="#36454F" Padding="6" Margin="0,6,0,0"/></Grid></Border></Grid></Border></Grid>
-<TextBlock Grid.Row="3" x:Name="StatusText" VerticalAlignment="Center" Foreground="#51606C" Text="正在准备只读 CAD 连接。" Margin="3,6,3,0" TextWrapping="Wrap"/>
+<Grid Grid.Row="3"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock x:Name="StatusText" VerticalAlignment="Center" Foreground="#51606C" Text="正在准备只读 CAD 连接。" Margin="3,6,9,0" TextWrapping="Wrap"/><Button x:Name="AboutButton" Grid.Column="1" Content="关于本软件" Padding="12,5" Margin="0,6,3,0" HorizontalAlignment="Right" VerticalAlignment="Center"/></Grid>
 </Grid></Window>
 '@
 $reader=[System.Xml.XmlNodeReader]::new($xaml); $Window=[Windows.Markup.XamlReader]::Load($reader)
-$AppRoot=$Window.FindName('AppRoot');$ControlGrid=$Window.FindName('ControlGrid');$ContentGrid=$Window.FindName('ContentGrid');$StartSettingsGroup=$Window.FindName('StartSettingsGroup');$CoordinateSwapBox=$Window.FindName('CoordinateSwapBox');$CurveDirectionBox=$Window.FindName('CurveDirectionBox');$SpecialLinesGroup=$Window.FindName('SpecialLinesGroup');$HostGroup=$Window.FindName('HostGroup');$OperationPanel=$Window.FindName('OperationPanel');$TablePanel=$Window.FindName('TablePanel');$PreviewPanel=$Window.FindName('PreviewPanel');$PrecisionBox=$Window.FindName('PrecisionBox');$PrefixBox=$Window.FindName('PrefixBox');$StartPositionBox=$Window.FindName('StartPositionBox');$StartStationBox=$Window.FindName('StartStationBox');$ConnectionToleranceBox=$Window.FindName('ConnectionToleranceBox');$DetectSpiralsBox=$Window.FindName('DetectSpiralsBox');$SpiralModePanel=$Window.FindName('SpiralModePanel');$StrictSpiralRadio=$Window.FindName('StrictSpiralRadio');$LooseSpiralRadio=$Window.FindName('LooseSpiralRadio');$StrictSpiralToleranceBox=$Window.FindName('StrictSpiralToleranceBox');$LooseSpiralToleranceBox=$Window.FindName('LooseSpiralToleranceBox');$HostSelector=$Window.FindName('HostSelector');$RefreshHostButton=$Window.FindName('RefreshHostButton');$HostStatusText=$Window.FindName('HostStatusText');$ImportButton=$Window.FindName('ImportButton');$ReadButton=$Window.FindName('ReadButton');$ClearButton=$Window.FindName('ClearButton');$DxfButton=$Window.FindName('DxfButton');$ExcelButton=$Window.FindName('ExcelButton');$RestoreDefaultsButton=$Window.FindName('RestoreDefaultsButton');$ReverseRouteButton=$Window.FindName('ReverseRouteButton');$ResetZoomButton=$Window.FindName('ResetZoomButton');$ElementGrid=$Window.FindName('ElementGrid');$SurveyorPreviewBox=$Window.FindName('SurveyorPreviewBox');$PreviewCanvas=$Window.FindName('PreviewCanvas');$DiagnosticText=$Window.FindName('DiagnosticText');$ProgressBox=$Window.FindName('ProgressBox');$StatusText=$Window.FindName('StatusText');
+$AppRoot=$Window.FindName('AppRoot');$ControlGrid=$Window.FindName('ControlGrid');$ContentGrid=$Window.FindName('ContentGrid');$StartSettingsGroup=$Window.FindName('StartSettingsGroup');$CoordinateSwapBox=$Window.FindName('CoordinateSwapBox');$CurveDirectionBox=$Window.FindName('CurveDirectionBox');$SpecialLinesGroup=$Window.FindName('SpecialLinesGroup');$HostGroup=$Window.FindName('HostGroup');$OperationPanel=$Window.FindName('OperationPanel');$TablePanel=$Window.FindName('TablePanel');$PreviewPanel=$Window.FindName('PreviewPanel');$PrecisionBox=$Window.FindName('PrecisionBox');$PrefixBox=$Window.FindName('PrefixBox');$StartPositionBox=$Window.FindName('StartPositionBox');$StartStationBox=$Window.FindName('StartStationBox');$ConnectionToleranceBox=$Window.FindName('ConnectionToleranceBox');$DetectSpiralsBox=$Window.FindName('DetectSpiralsBox');$SpiralModePanel=$Window.FindName('SpiralModePanel');$StrictSpiralRadio=$Window.FindName('StrictSpiralRadio');$LooseSpiralRadio=$Window.FindName('LooseSpiralRadio');$StrictSpiralToleranceBox=$Window.FindName('StrictSpiralToleranceBox');$LooseSpiralToleranceBox=$Window.FindName('LooseSpiralToleranceBox');$HostSelector=$Window.FindName('HostSelector');$RefreshHostButton=$Window.FindName('RefreshHostButton');$HostStatusText=$Window.FindName('HostStatusText');$ImportButton=$Window.FindName('ImportButton');$ReadButton=$Window.FindName('ReadButton');$ClearButton=$Window.FindName('ClearButton');$DxfButton=$Window.FindName('DxfButton');$ExcelButton=$Window.FindName('ExcelButton');$RestoreDefaultsButton=$Window.FindName('RestoreDefaultsButton');$ReverseRouteButton=$Window.FindName('ReverseRouteButton');$ResetZoomButton=$Window.FindName('ResetZoomButton');$ElementGrid=$Window.FindName('ElementGrid');$SurveyorPreviewBox=$Window.FindName('SurveyorPreviewBox');$PreviewCanvas=$Window.FindName('PreviewCanvas');$DiagnosticText=$Window.FindName('DiagnosticText');$ProgressBox=$Window.FindName('ProgressBox');$StatusText=$Window.FindName('StatusText');$AboutButton=$Window.FindName('AboutButton');
 $script:AutoResultColumns=@('终点X坐标(m)','终点Y坐标(m)','终点方位角(dd.mmss)')
 $ElementGrid.Add_AutoGeneratingColumn({
     param($sender,$eventArgs)
@@ -800,19 +888,25 @@ function Run-Import([bool]$selectOnScreen) {
     # Keep catch/finally paths safe even if CAD connection or settings validation fails early.
     $cadCount=0;$raw=[System.Collections.Generic.List[object]]::new();$stage='初始化'
     try {
-        $script:CurrentSettings=Get-CurrentSettings; $script:SpiralFitAttemptCount=0; $script:PreviewRenderNotice=''; $script:Diagnostics.Clear();$coordinateMode=if([bool]$script:CurrentSettings.SwapCadXY){'已启用 CAD XY 交换（测绘 X=北、Y=东）'}else{'未启用 CAD XY 交换（保留 CAD X/Y）'};$script:Diagnostics.Add($coordinateMode); Write-Progress ('开始导入。{0}；端点自动连接容差：{1:0.###} mm（配置文件只读）。' -f $coordinateMode,($script:ConnectionToleranceM*1000.0)) $true; $stage='连接 CAD';$cad=Get-RunningCadApplication; $app=$cad.Application; $doc=$app.ActiveDocument
+        $script:CurrentSettings=Get-CurrentSettings; $script:SpiralFitAttemptCount=0; $script:PreviewRenderNotice=''; $script:Diagnostics.Clear();$coordinateMode=if([bool]$script:CurrentSettings.SwapCadXY){'已启用 CAD XY 交换（测绘 X=北、Y=东）'}else{'未启用 CAD XY 交换（保留 CAD X/Y）'};$script:Diagnostics.Add($coordinateMode); Write-Progress ('开始导入。{0}；端点自动连接容差：{1:0.###} mm（配置文件只读）。' -f $coordinateMode,($script:ConnectionToleranceM*1000.0)) $true; $stage='连接 CAD';$cad=Get-RunningCadApplication; $app=$cad.Application; $doc=Get-ActiveCadDocument $app
         $stage='读取 CAD 实体'
         if($selectOnScreen){
-            if($cad.Name -eq 'Autodesk AutoCAD'){
-                $set=$doc.PickfirstSelectionSet; $selected=[int]$set.Count
-                if($selected -le 0){throw 'AutoCAD 未检测到预选对象。请先在 AutoCAD 中窗口/框选所需 LINE、ARC 或多段线，再切回本程序点击“读取 CAD 预选”。程序不会向 AutoCAD 发送选择命令。'}
-                Write-Progress ("AutoCAD 预选读取：$selected 个实体，开始只读转换。") $false
-                for($i=0;$i -lt $selected;$i++){$entity=$set.Item($i);$cadCount++;Convert-AndAddEntity $entity $raw $cadCount 'AutoCAD 预选集';if(($cadCount % 50) -eq 0 -or $cadCount -eq $selected){Write-Progress ("已读取 $cadCount/$selected 个 AutoCAD 预选实体，当前生成 $($raw.Count) 个道路段。") $false;Pump-UiEvents};if($raw.Count -gt $script:MaxCandidateSegments){throw "候选道路段超过安全上限 $($script:MaxCandidateSegments)，请减少预选范围。"}}
+            $pickSet=$null; $selected=0
+            try {$pickSet=$doc.PickfirstSelectionSet; $selected=[int]$pickSet.Count} catch {}
+            $pickfirstEnabled=1
+            try {$pickfirstEnabled=[int]$doc.GetVariable('PICKFIRST')} catch {}
+            if($selected -gt 0){
+                Write-Progress ("$($cad.Name) 当前标签预选读取：$selected 个实体，开始只读转换。") $false
+                for($i=0;$i -lt $selected;$i++){$entity=$pickSet.Item($i);$cadCount++;Convert-AndAddEntity $entity $raw $cadCount ("$($cad.Name) 预选集");if(($cadCount % 50) -eq 0 -or $cadCount -eq $selected){Write-Progress ("已读取 $cadCount/$selected 个预选实体，当前生成 $($raw.Count) 个道路段。") $false;Pump-UiEvents};if($raw.Count -gt $script:MaxCandidateSegments){throw "候选道路段超过安全上限 $($script:MaxCandidateSegments)，请减少预选范围。"}}
+            } elseif($cad.Name -eq 'Autodesk AutoCAD') {
+                if($pickfirstEnabled -eq 0){throw 'AutoCAD 关闭了“先选择后执行”（系统变量 PICKFIRST=0），预选无法被读取。请在 AutoCAD 命令行输入 PICKFIRST 回车、再输入 1 回车（或在“选项 → 选择集”勾选“先选择后执行”），然后在当前标签重新点选或框选对象。程序不会向 AutoCAD 发送选择命令。'}
+                throw 'AutoCAD 当前标签未检测到预选对象。请先在 AutoCAD 当前标签中点选或窗口/框选所需 LINE、ARC 或多段线，再切回本程序点击“读取 CAD 预选 / 选择”。程序不会向 AutoCAD 发送选择命令。'
             } else {
-                $choice=[System.Windows.MessageBox]::Show(('请确认已打开 {0} 图形。单击“确定”后程序会最小化，并在 CAD 中点选或框选多段线、直线和圆弧；完成后请按 Enter。\n\n导入过程只读取实体，不会修改或保存图形。' -f $cad.Name),('CAD 导入 - {0}' -f $cad.Name),[System.Windows.MessageBoxButton]::OKCancel,[System.Windows.MessageBoxImage]::Information)
+                if($pickfirstEnabled -eq 0){$script:Diagnostics.Add(('{0} 的 PICKFIRST=0（未启用先选择后执行），无法读取预选；已转入屏幕点选模式。' -f $cad.Name))}
+                $choice=[System.Windows.MessageBox]::Show(('请确认已打开 {0} 图形。单击“确定”后程序会最小化，并在 CAD 当前标签中点选或框选多段线、直线和圆弧；完成后请按 Enter。{1}{1}导入过程只读取实体，不会修改或保存图形。' -f $cad.Name,[Environment]::NewLine),('CAD 导入 - {0}' -f $cad.Name),[System.Windows.MessageBoxButton]::OKCancel,[System.Windows.MessageBoxImage]::Information)
                 if($choice -ne [System.Windows.MessageBoxResult]::OK){return}
                 $sets=$doc.SelectionSets; $setName='RDCURVE_'+([Guid]::NewGuid().ToString('N').Substring(0,8)); $set=$null
-                try {$set=$sets.Add($setName);$Window.WindowState='Minimized';Start-Sleep -Milliseconds 350;$set.SelectOnScreen();$selected=[int]$set.Count;Write-Progress ("ZWCAD 选择完成：$selected 个实体，开始读取。") $false;for($i=0;$i -lt $selected;$i++){$entity=$set.Item($i);$cadCount++;Convert-AndAddEntity $entity $raw $cadCount 'ZWCAD 选择集';if(($cadCount % 50) -eq 0 -or $cadCount -eq $selected){Write-Progress ("已读取 $cadCount/$selected 个选择实体，当前生成 $($raw.Count) 个道路段。") $false;Pump-UiEvents};if($raw.Count -gt $script:MaxCandidateSegments){throw "候选道路段超过安全上限 $($script:MaxCandidateSegments)，请减少框选范围。"}}} finally {if($set){try{$set.Delete()}catch{}};$Window.WindowState='Normal'}
+                try {$set=$sets.Add($setName);$Window.WindowState='Minimized';Start-Sleep -Milliseconds 350;$set.SelectOnScreen();$selected=[int]$set.Count;Write-Progress ("$($cad.Name) 选择完成：$selected 个实体，开始读取。") $false;for($i=0;$i -lt $selected;$i++){$entity=$set.Item($i);$cadCount++;Convert-AndAddEntity $entity $raw $cadCount "$($cad.Name) 选择集";if(($cadCount % 50) -eq 0 -or $cadCount -eq $selected){Write-Progress ("已读取 $cadCount/$selected 个选择实体，当前生成 $($raw.Count) 个道路段。") $false;Pump-UiEvents};if($raw.Count -gt $script:MaxCandidateSegments){throw "候选道路段超过安全上限 $($script:MaxCandidateSegments)，请减少框选范围。"}}} finally {if($set){try{$set.Delete()}catch{}};$Window.WindowState='Normal'}
             }
         } else {
             $visible=Get-VisibleLayerNames $doc; $hidden=0; $other=0; $StatusText.Text=('正在读取当前显示图层（{0} 个可见图层）…' -f $visible.Count); $StatusText.UpdateLayout(); Write-Progress ('阶段 1/3：扫描当前显示图层，共 {0} 个可见图层。' -f $visible.Count) $false
@@ -855,7 +949,94 @@ function Restore-DefaultValues {
     } catch {[System.Windows.MessageBox]::Show(('恢复默认值失败：{0}' -f $_.Exception.Message),'恢复默认值',[System.Windows.MessageBoxButton]::OK,[System.Windows.MessageBoxImage]::Warning)|Out-Null}
 }
 
-Initialize-ResponsiveWindow;Update-SpiralModeUi;$Window.Add_SizeChanged({Update-ResponsiveLayout});$DetectSpiralsBox.Add_Checked({Update-SpiralModeUi});$DetectSpiralsBox.Add_Unchecked({Update-SpiralModeUi});$RefreshHostButton.Add_Click({Update-HostStatus});$HostSelector.Add_SelectionChanged({Update-HostStatus});$ImportButton.Add_Click({Run-Import $true}); $ReadButton.Add_Click({Run-Import $false}); $ReverseRouteButton.Add_Click({Reverse-PublishedRoute}); $ClearButton.Add_Click({Clear-ImportedData $true}); $DxfButton.Add_Click({try{Export-Dxf}catch{[System.Windows.MessageBox]::Show($_.Exception.Message,'导出 DXF')|Out-Null}}); $ExcelButton.Add_Click({try{Export-Excel}catch{[System.Windows.MessageBox]::Show($_.Exception.Message,'导出 Excel')|Out-Null}}); $ResetZoomButton.Add_Click({Reset-PreviewZoom}); $RestoreDefaultsButton.Add_Click({Restore-DefaultValues}); $PreviewCanvas.Add_SizeChanged({Draw-Schematic});$PreviewCanvas.Add_MouseWheel({param($sender,$eventArgs) Zoom-Preview $eventArgs});$PreviewCanvas.Add_MouseLeftButtonDown({param($sender,$eventArgs) Start-PreviewPan $eventArgs});$PreviewCanvas.Add_MouseMove({param($sender,$eventArgs) Move-PreviewPan $eventArgs});$PreviewCanvas.Add_MouseLeftButtonUp({param($sender,$eventArgs) End-PreviewPan $eventArgs});$PreviewCanvas.Add_MouseLeave({param($sender,$eventArgs) End-PreviewPan $eventArgs});$CoordinateSwapBox.Add_Checked({Refresh-DisplayOptions});$CoordinateSwapBox.Add_Unchecked({Refresh-DisplayOptions});$CurveDirectionBox.Add_Checked({Refresh-DisplayOptions});$CurveDirectionBox.Add_Unchecked({Refresh-DisplayOptions})
+$script:AppVersion='1.1'
+$script:AppAuthor='求道之心'
+$script:AppLicenseName='MIT'
+$script:ProjectReleasesUrl='https://github.com/XEMPZ/RoadCurveImporter/releases'
+$script:BugReportEmail='jewettleah2@gmail.com'
+$script:TechnicalManualPath=Join-Path $PSScriptRoot 'RoadCurveImporter_技术手册.md'
+function New-AboutBrush([string]$hex) {
+    return [System.Windows.Media.SolidColorBrush]::new(([System.Windows.Media.ColorConverter]::ConvertFromString($hex)))
+}
+function New-AboutTextBlock([string]$text,[double]$fontSize=12,[bool]$bold=$false,[string]$color='#22303C',[double]$top=0,[double]$bottom=4) {
+    $block=[System.Windows.Controls.TextBlock]::new()
+    $block.Text=$text;$block.FontSize=$fontSize
+    if($bold){$block.FontWeight=[System.Windows.FontWeights]::Bold}
+    $block.Foreground=New-AboutBrush $color
+    $block.Margin=[System.Windows.Thickness]::new(0,$top,0,$bottom)
+    $block.TextWrapping=[System.Windows.TextWrapping]::Wrap
+    return $block
+}
+function New-AboutButton([string]$text,[double]$left=6) {
+    $button=[System.Windows.Controls.Button]::new()
+    $button.Content=$text;$button.Padding=[System.Windows.Thickness]::new(10,4)
+    $button.Margin=[System.Windows.Thickness]::new($left,0,6,0)
+    $button.VerticalAlignment=[System.Windows.VerticalAlignment]::Center
+    return $button
+}
+function New-AboutValueBox([string]$value,[double]$minWidth) {
+    $box=[System.Windows.Controls.TextBox]::new()
+    $box.Text=$value;$box.IsReadOnly=$true;$box.IsReadOnlyCaretVisible=$true
+    $box.MinWidth=$minWidth;$box.VerticalAlignment=[System.Windows.VerticalAlignment]::Center
+    $box.Margin=[System.Windows.Thickness]::new(0,0,6,0)
+    return $box
+}
+function Show-AboutDialog {
+    $about=[System.Windows.Window]::new()
+    $about.Title='关于本软件';$about.Width=520;$about.Height=480
+    $about.WindowStartupLocation=[System.Windows.WindowStartupLocation]::CenterOwner;$about.Owner=$Window
+    $about.ResizeMode=[System.Windows.ResizeMode]::NoResize
+    $about.FontFamily='Microsoft YaHei UI';$about.FontSize=12
+    $about.Background=[System.Windows.Media.Brushes]::White
+    $dock=[System.Windows.Controls.DockPanel]::new();$dock.Margin=[System.Windows.Thickness]::new(16)
+    $bottomPanel=[System.Windows.Controls.StackPanel]::new()
+    [System.Windows.Controls.DockPanel]::SetDock($bottomPanel,[System.Windows.Controls.Dock]::Bottom)
+    $bottomPanel.HorizontalAlignment=[System.Windows.HorizontalAlignment]::Right
+    $bottomPanel.Margin=[System.Windows.Thickness]::new(0,14,0,0)
+    $closeButton=New-AboutButton '关闭' 0;$closeButton.Padding=[System.Windows.Thickness]::new(18,5)
+    $closeButton.Add_Click({$about.Close()});$bottomPanel.Children.Add($closeButton)
+    $dock.Children.Add($bottomPanel)
+    $body=[System.Windows.Controls.StackPanel]::new()
+    $body.Children.Add((New-AboutTextBlock '道路曲线要素导入器' 18 $true '#163B61' 0 6))
+    $body.Children.Add((New-AboutTextBlock ('软件版本：{0}' -f $script:AppVersion) 13 $true '#24567C' 2 6))
+    $body.Children.Add((New-AboutTextBlock ('作者：{0}' -f $script:AppAuthor) 12 $false '#22303C' 4 4))
+    $body.Children.Add((New-AboutTextBlock ('许可证：{0} License —— 开源免费，允许自由使用、复制、修改与再分发；完整条款见随附 LICENSE 文件。' -f $script:AppLicenseName) 12 $false '#22303C' 0 4))
+    $helpRow=[System.Windows.Controls.WrapPanel]::new();$helpRow.Margin=[System.Windows.Thickness]::new(0,10,0,4)
+    $helpLabel=New-AboutTextBlock '帮助：' 12 $false '#22303C' 6 0
+    $helpLabel.VerticalAlignment=[System.Windows.VerticalAlignment]::Center
+    $helpRow.Children.Add($helpLabel)
+    $manualButton=New-AboutButton '打开技术手册' 0
+    $manualButton.Add_Click({
+        try {
+            if(-not (Test-Path -LiteralPath $script:TechnicalManualPath)){throw '技术手册文件不存在。'}
+            Start-Process -FilePath $script:TechnicalManualPath
+        } catch {[System.Windows.MessageBox]::Show(('无法打开技术手册：{0}' -f $_.Exception.Message),'帮助',[System.Windows.MessageBoxButton]::OK,[System.Windows.MessageBoxImage]::Warning)|Out-Null}
+    })
+    $helpRow.Children.Add($manualButton);$body.Children.Add($helpRow)
+    $body.Children.Add((New-AboutTextBlock '最新版本地址（GitHub 发布页，可点击打开或复制）：' 12 $true '#22303C' 10 4))
+    $urlRow=[System.Windows.Controls.WrapPanel]::new()
+    $urlRow.Children.Add((New-AboutValueBox $script:ProjectReleasesUrl 300))
+    $urlCopy=New-AboutButton '复制链接'
+    $urlCopy.Add_Click({try{[System.Windows.Clipboard]::SetText($script:ProjectReleasesUrl);$urlCopy.Content='已复制'}catch{}})
+    $urlRow.Children.Add($urlCopy)
+    $urlOpen=New-AboutButton '打开页面'
+    $urlOpen.Add_Click({try{Start-Process $script:ProjectReleasesUrl}catch{[System.Windows.MessageBox]::Show(('无法打开发布页面：{0}' -f $_.Exception.Message),'最新版本',[System.Windows.MessageBoxButton]::OK,[System.Windows.MessageBoxImage]::Warning)|Out-Null}})
+    $urlRow.Children.Add($urlOpen);$body.Children.Add($urlRow)
+    $body.Children.Add((New-AboutTextBlock '报告 BUG（复制邮箱后写信反馈）：' 12 $true '#22303C' 12 4))
+    $mailRow=[System.Windows.Controls.WrapPanel]::new()
+    $mailRow.Children.Add((New-AboutValueBox $script:BugReportEmail 220))
+    $mailCopy=New-AboutButton '复制邮箱'
+    $mailCopy.Add_Click({try{[System.Windows.Clipboard]::SetText($script:BugReportEmail);$mailCopy.Content='已复制'}catch{}})
+    $mailRow.Children.Add($mailCopy)
+    $mailWrite=New-AboutButton '写邮件'
+    $mailWrite.Add_Click({try{Start-Process ('mailto:{0}' -f $script:BugReportEmail)}catch{[System.Windows.MessageBox]::Show(('无法打开邮件程序：{0}' -f $_.Exception.Message),'报告 BUG',[System.Windows.MessageBoxButton]::OK,[System.Windows.MessageBoxImage]::Warning)|Out-Null}})
+    $mailRow.Children.Add($mailWrite);$body.Children.Add($mailRow)
+    $dock.Children.Add($body)
+    $about.Content=$dock
+    $about.ShowDialog() | Out-Null
+}
+
+Initialize-ResponsiveWindow;Update-SpiralModeUi;$Window.Add_SizeChanged({Update-ResponsiveLayout});$DetectSpiralsBox.Add_Checked({Update-SpiralModeUi});$DetectSpiralsBox.Add_Unchecked({Update-SpiralModeUi});$RefreshHostButton.Add_Click({Update-HostStatus});$HostSelector.Add_SelectionChanged({Update-HostStatus});$ImportButton.Add_Click({Run-Import $true}); $ReadButton.Add_Click({Run-Import $false}); $ReverseRouteButton.Add_Click({Reverse-PublishedRoute}); $ClearButton.Add_Click({Clear-ImportedData $true}); $DxfButton.Add_Click({try{Export-Dxf}catch{[System.Windows.MessageBox]::Show($_.Exception.Message,'导出 DXF')|Out-Null}}); $ExcelButton.Add_Click({try{Export-Excel}catch{[System.Windows.MessageBox]::Show($_.Exception.Message,'导出 Excel')|Out-Null}}); $ResetZoomButton.Add_Click({Reset-PreviewZoom}); $RestoreDefaultsButton.Add_Click({Restore-DefaultValues}); $AboutButton.Add_Click({Show-AboutDialog}); $PreviewCanvas.Add_SizeChanged({Draw-Schematic});$PreviewCanvas.Add_MouseWheel({param($sender,$eventArgs) Zoom-Preview $eventArgs});$PreviewCanvas.Add_MouseLeftButtonDown({param($sender,$eventArgs) Start-PreviewPan $eventArgs});$PreviewCanvas.Add_MouseMove({param($sender,$eventArgs) Move-PreviewPan $eventArgs});$PreviewCanvas.Add_MouseLeftButtonUp({param($sender,$eventArgs) End-PreviewPan $eventArgs});$PreviewCanvas.Add_MouseLeave({param($sender,$eventArgs) End-PreviewPan $eventArgs});$CoordinateSwapBox.Add_Checked({Refresh-DisplayOptions});$CoordinateSwapBox.Add_Unchecked({Refresh-DisplayOptions});$CurveDirectionBox.Add_Checked({Refresh-DisplayOptions});$CurveDirectionBox.Add_Unchecked({Refresh-DisplayOptions})
 
 if($CoordinateSwapSelfTest){
     try {
@@ -892,7 +1073,9 @@ if($CoordinateSwapSelfTest){
         $script:Elements.Clear();$script:Elements.Add([pscustomobject]@{_Element=$line})|Out-Null;$script:Elements.Add([pscustomobject]@{_Element=$arc})|Out-Null;$script:Elements.Add([pscustomobject]@{_Element=$spiral})|Out-Null
         Export-Dxf $dxfPath
         $validatorPath=Join-Path $PSScriptRoot 'validate_dxf_ezdxf.py'
-        $validationLines=& python $validatorPath $dxfPath
+        $interpreter=Get-PythonInterpreter
+        if($null -eq $interpreter){throw '未找到含 ezdxf 的 Python；请先执行 pip install -r requirements.txt。'}
+        $validationLines=& $interpreter.File @($interpreter.Prefix) $validatorPath $dxfPath
         if($LASTEXITCODE -ne 0){throw ('标准 DXF 解析器拒绝自测文件：{0}' -f ($validationLines -join ' '))}
         $validation=(($validationLines -join [Environment]::NewLine)|ConvertFrom-Json)
         if(-not [bool]$validation.valid){throw '标准 DXF 解析器报告自测文件无效。'}
