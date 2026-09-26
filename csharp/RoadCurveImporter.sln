@@ -1,0 +1,34 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RoadCurve.Core", "RoadCurve.Core\RoadCurve.Core.csproj", "{E52A8FC6-6C82-4705-A49C-1477A9F74851}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RoadCurveImporter", "RoadCurveImporter\RoadCurveImporter.csproj", "{59E8FED8-15A2-4E13-8F64-67D88840D588}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RoadCurve.Tests", "RoadCurve.Tests\RoadCurve.Tests.csproj", "{F3CC4BDA-1F95-4D09-86E8-77C12BF7AAAF}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{E52A8FC6-6C82-4705-A49C-1477A9F74851}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E52A8FC6-6C82-4705-A49C-1477A9F74851}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E52A8FC6-6C82-4705-A49C-1477A9F74851}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E52A8FC6-6C82-4705-A49C-1477A9F74851}.Release|Any CPU.Build.0 = Release|Any CPU
+		{59E8FED8-15A2-4E13-8F64-67D88840D588}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{59E8FED8-15A2-4E13-8F64-67D88840D588}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{59E8FED8-15A2-4E13-8F64-67D88840D588}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{59E8FED8-15A2-4E13-8F64-67D88840D588}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F3CC4BDA-1F95-4D09-86E8-77C12BF7AAAF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F3CC4BDA-1F95-4D09-86E8-77C12BF7AAAF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F3CC4BDA-1F95-4D09-86E8-77C12BF7AAAF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F3CC4BDA-1F95-4D09-86E8-77C12BF7AAAF}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

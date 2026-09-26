@@ -1,0 +1,11 @@
+# ---- .NET 构建产物 ----
+bin/
+obj/
+publish/
+.vs/
+*.user
+*.suo
+TestResults/
+
+# 根目录 .gitignore 忽略了该回归数据文件，C# 测试需要随源码分发
+!RoadCurve.Tests/Data/high_vertex_polyline_inspection.json

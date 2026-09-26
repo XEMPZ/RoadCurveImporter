@@ -1,0 +1,217 @@
+<Window x:Class="RoadCurveImporter.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="道路曲线要素导入器 v1.1" Height="760" Width="1280"
+        MinHeight="650" MinWidth="700"
+        FontFamily="Microsoft YaHei UI" FontSize="12"
+        Background="#F3F6F9"
+        WindowStartupLocation="CenterScreen"
+        UseLayoutRounding="True" SnapsToDevicePixels="True"
+        Loaded="Window_Loaded" SizeChanged="Window_SizeChanged">
+  <Grid x:Name="AppRoot" Margin="8" MinWidth="492">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*" MinHeight="245"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+
+    <!-- 头部 -->
+    <Border Background="White" BorderBrush="#DCE5ED" BorderThickness="1" CornerRadius="9" Padding="9">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="250"/>
+        </Grid.ColumnDefinitions>
+        <StackPanel>
+          <TextBlock Text="道路曲线要素导入" FontSize="20" FontWeight="SemiBold" Foreground="#163B61"/>
+          <TextBlock Text="按 CAD 选择或读取当前显示图层；全过程仅读取几何，不修改、保存或关闭图形。"
+                     Foreground="#60717F" Margin="0,5,0,0" TextWrapping="Wrap"/>
+        </StackPanel>
+        <Border Grid.Column="1" Background="#F6FAFF" BorderBrush="#D4E6F7" BorderThickness="1" CornerRadius="6" Padding="9">
+          <StackPanel>
+            <TextBlock Text="当前 CAD 连接" FontWeight="SemiBold" Foreground="#24567C"/>
+            <TextBlock x:Name="HostStatusText" Text="正在检测…" TextWrapping="Wrap" Margin="0,3,0,0" FontSize="12"/>
+          </StackPanel>
+        </Border>
+      </Grid>
+    </Border>
+
+    <!-- 控制区 -->
+    <Border Grid.Row="1" Margin="0,6,0,6" Background="White" BorderBrush="#DCE5ED" BorderThickness="1" CornerRadius="9" Padding="7">
+      <Grid x:Name="ControlGrid">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="1.45*"/>
+          <ColumnDefinition Width="1.20*"/>
+          <ColumnDefinition Width="1.05*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <GroupBox x:Name="StartSettingsGroup" Header="路线起算设置" Padding="9" Margin="0,0,9,0">
+          <Grid>
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*" MinWidth="70"/>
+              <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*" MinWidth="70"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="计算精度 (mm)" VerticalAlignment="Center"/>
+            <TextBox x:Name="PrecisionBox" Grid.Column="1" Margin="7,0,12,0" MinWidth="58" Text="1"/>
+            <TextBlock Grid.Column="2" Text="线路前缀" VerticalAlignment="Center"/>
+            <TextBox x:Name="PrefixBox" Grid.Column="3" Margin="7,0,0,0" MinWidth="58" Text="K"/>
+            <TextBlock Grid.Row="1" Text="起算要素序号" VerticalAlignment="Center" Margin="0,9,0,0"/>
+            <TextBox x:Name="StartPositionBox" Grid.Row="1" Grid.Column="1" Margin="7,9,12,0" MinWidth="58" Text="1" ToolTip="按导入排序后的要素序号。"/>
+            <TextBlock Grid.Row="1" Grid.Column="2" Text="起算里程 (m)" VerticalAlignment="Center" Margin="0,9,0,0"/>
+            <TextBox x:Name="StartStationBox" Grid.Row="1" Grid.Column="3" Margin="7,9,0,0" MinWidth="58" Text="0.000"/>
+            <CheckBox x:Name="CoordinateSwapBox" Grid.Row="2" Grid.ColumnSpan="4"
+                      Content="CAD 坐标 XY 交换（仅表格/导出）" IsChecked="True" Margin="0,7,0,0"
+                      ToolTip="默认勾选：仅将道路要素表与测量员八列中的 CAD X/Y 显示顺序交换；示意图和 CAD 还原 DXF 保持原始方向。"
+                      Checked="DisplayOption_Changed" Unchecked="DisplayOption_Changed"/>
+            <CheckBox x:Name="CurveDirectionBox" Grid.Row="2" Grid.ColumnSpan="4"
+                      Content="曲线方向反向（左右符号取反）" IsChecked="False" Margin="250,7,0,0"
+                      ToolTip="默认不勾选。仅反向圆曲线、缓和曲线和离散曲线的左右方向；道路要素表、示意图和导出数据同步刷新。"
+                      Checked="DisplayOption_Changed" Unchecked="DisplayOption_Changed"/>
+          </Grid>
+        </GroupBox>
+        <GroupBox x:Name="SpecialLinesGroup" Grid.Column="1" Header="特殊线预处理" Padding="9" Margin="0,0,9,0">
+          <StackPanel>
+            <CheckBox x:Name="DetectSpiralsBox" Content="识别并合并欧拉缓和曲线" IsChecked="True"
+                      ToolTip="仅高节点无 bulge 折线参与欧拉回旋线判定；不勾选时按原始折线逐段输入。"
+                      Checked="DetectSpirals_Changed" Unchecked="DetectSpirals_Changed"/>
+            <StackPanel x:Name="SpiralModePanel" Margin="18,6,0,0">
+              <RadioButton x:Name="StrictSpiralRadio" Content="严格判定（固定 ≤ 0.5 mm）" IsChecked="True"
+                           ToolTip="固定的 0.5 mm 最大拟合残差验收，不可在界面或配置文件中修改。"/>
+              <RadioButton x:Name="LooseSpiralRadio" Content="宽松判定（默认 ≤ 2 mm）" Margin="0,4,0,0"
+                           ToolTip="阈值在界面中只读；默认 2 mm，修改同目录配置文件后重启生效。"/>
+              <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                <TextBlock Text="严格阈值" VerticalAlignment="Center"/>
+                <TextBox x:Name="StrictSpiralToleranceBox" Width="58" Margin="7,0,5,0" IsReadOnly="True" IsEnabled="False" Background="#E9EDF1" Foreground="#55636E"/>
+                <TextBlock Text="mm（固定）" VerticalAlignment="Center"/>
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                <TextBlock Text="宽松阈值" VerticalAlignment="Center"/>
+                <TextBox x:Name="LooseSpiralToleranceBox" Width="58" Margin="7,0,5,0" IsReadOnly="True" IsEnabled="False" Background="#E9EDF1" Foreground="#55636E"
+                          ToolTip="修改 RoadCurveImporter.config.json 的 looseSpiralFitToleranceMm 后重启。"/>
+                <TextBlock Text="mm（配置）" VerticalAlignment="Center"/>
+              </StackPanel>
+            </StackPanel>
+            <TextBlock Text="未通过或未启用识别的高节点折线，均按原始顶点逐段保真输入；含直线与圆弧的复合多段线始终分离处理。"
+                       FontSize="10" Foreground="#6E7F8C" TextWrapping="Wrap" Margin="0,7,0,0"/>
+            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+              <TextBlock Text="端点连接容差 (mm)" VerticalAlignment="Center"/>
+              <TextBox x:Name="ConnectionToleranceBox" Width="60" Margin="7,0,0,0" IsReadOnly="True" IsEnabled="False" Background="#E9EDF1" Foreground="#55636E"
+                       ToolTip="只读；修改同目录 RoadCurveImporter.config.json 后重启。"/>
+            </StackPanel>
+          </StackPanel>
+        </GroupBox>
+        <GroupBox x:Name="HostGroup" Grid.Column="2" Header="CAD 主机" Padding="9" Margin="0,0,9,0">
+          <StackPanel>
+            <ComboBox x:Name="HostSelector" SelectedIndex="0" MinWidth="150" SelectionChanged="HostSelector_SelectionChanged">
+              <ComboBoxItem Content="自动检测（优先 ZWCAD）"/>
+              <ComboBoxItem Content="SouthMap / ZWCAD"/>
+              <ComboBoxItem Content="Autodesk AutoCAD"/>
+            </ComboBox>
+            <Button x:Name="RefreshHostButton" Content="刷新连接状态" Margin="0,8,0,0" HorizontalAlignment="Left" Padding="10,4" Click="RefreshHostButton_Click"/>
+          </StackPanel>
+        </GroupBox>
+        <StackPanel x:Name="OperationPanel" Grid.Column="3" VerticalAlignment="Center" MinWidth="210">
+          <Button x:Name="ImportButton" Content="读取 CAD 预选 / 选择" Padding="13,6" Background="#146ABD" Foreground="White" FontWeight="SemiBold" Click="ImportButton_Click"/>
+          <WrapPanel Margin="0,7,0,0">
+            <Button x:Name="ReadButton" Content="读取显示图层" Padding="9,4" Margin="0,0,6,0" Click="ReadButton_Click"/>
+            <Button x:Name="ReverseRouteButton" Content="一键换向" Padding="9,4" Margin="0,0,6,0" IsEnabled="False"
+                    ToolTip="反转线路起终点、要素顺序、方位角和曲线左右方向；起算要素自动设为 1。" Click="ReverseRouteButton_Click"/>
+            <Button x:Name="ClearButton" Content="清除数据" Padding="9,4" Click="ClearButton_Click"/>
+          </WrapPanel>
+          <WrapPanel Margin="0,6,0,0">
+            <Button x:Name="DxfButton" Content="导出 CAD 还原 DXF" Padding="9,4" Margin="0,0,6,0"
+                    ToolTip="始终输出 CAD 原始笛卡尔坐标和原始曲线方向；缓和曲线以折线导出。" Click="DxfButton_Click"/>
+            <Button x:Name="ExcelButton" Content="导出测量员 Excel" Padding="9,4" Margin="0,0,6,0" Click="ExcelButton_Click"/>
+            <Button x:Name="RestoreDefaultsButton" Content="恢复默认值" Padding="9,4"
+                    ToolTip="恢复界面参数与同目录配置文件的默认值；不会修改 CAD 图形。" Click="RestoreDefaultsButton_Click"/>
+          </WrapPanel>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <!-- 内容区 -->
+    <Grid x:Name="ContentGrid" Grid.Row="2">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="2.2*"/>
+        <ColumnDefinition Width="12"/>
+        <ColumnDefinition Width="1*"/>
+      </Grid.ColumnDefinitions>
+      <Grid.RowDefinitions><RowDefinition Height="*"/></Grid.RowDefinitions>
+      <Border x:Name="TablePanel" Background="White" BorderBrush="#DCE5ED" BorderThickness="1" CornerRadius="9" Padding="8">
+        <DockPanel>
+          <Grid DockPanel.Dock="Top" Margin="2,0,2,7">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel>
+              <TextBlock Text="道路要素表" FontWeight="SemiBold" FontSize="15" Foreground="#163B61"/>
+              <TextBlock Text="核验预览：末尾灰色列为自动识别/计算结果；固定八列 Excel 仍为 8 列无表头。表中全部方位角采用 dd.mmss（度分秒编码）。"
+                         FontSize="11" Foreground="#6E7F8C" Margin="0,2,0,0" TextWrapping="Wrap"/>
+            </StackPanel>
+            <CheckBox x:Name="SurveyorPreviewBox" Grid.Column="1" Content="查看测量员格式预览" VerticalAlignment="Center"
+                      ToolTip="勾选后显示含线型、dd.mmss 方位角和灰色终点核验列的扩展预览；Excel 导出仍为固定无表头八列，且第 5 列方位角同样采用 dd.mmss。"
+                      Checked="SurveyorPreviewBox_CheckedChanged" Unchecked="SurveyorPreviewBox_CheckedChanged"/>
+          </Grid>
+          <DataGrid x:Name="ElementGrid" AutoGenerateColumns="True" IsReadOnly="True" CanUserAddRows="False"
+                    GridLinesVisibility="Horizontal" AlternatingRowBackground="#F6FAFD"
+                    HeadersVisibility="Column" MinHeight="180"
+                    VirtualizingPanel.IsVirtualizing="True"
+                    VirtualizingPanel.VirtualizationMode="Recycling"/>
+        </DockPanel>
+      </Border>
+      <Border x:Name="PreviewPanel" Grid.Column="2" Background="White" BorderBrush="#DCE5ED" BorderThickness="1" CornerRadius="9" Padding="8">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*" MinHeight="150"/>
+            <RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <Grid Grid.Row="0" Margin="3">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel>
+              <TextBlock Text="线路示意图" FontWeight="SemiBold" FontSize="15" Foreground="#163B61"/>
+              <TextBlock Text="绿色为起点，红色为终点，橙色虚线为端点容差填充；左键拖拽平移。"
+                         FontSize="10" Foreground="#6E7F8C" Margin="0,2,0,0" TextWrapping="Wrap"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+              <TextBlock Text="滚轮缩放 25%–1000%" FontSize="10" Foreground="#6E7F8C" VerticalAlignment="Center" Margin="0,0,6,0"/>
+              <Button x:Name="ResetZoomButton" Content="复位视图" ToolTip="同时复位缩放比例和拖拽位置" Padding="7,3" Click="ResetZoomButton_Click"/>
+            </StackPanel>
+          </Grid>
+          <Border Grid.Row="1" BorderBrush="#E3EAF0" BorderThickness="1" Margin="0,5,0,8">
+            <Canvas x:Name="PreviewCanvas" Background="#FCFDFE" MinHeight="150" ClipToBounds="True" Cursor="Hand"
+                    SizeChanged="PreviewCanvas_SizeChanged"
+                    MouseWheel="PreviewCanvas_MouseWheel"
+                    MouseLeftButtonDown="PreviewCanvas_MouseLeftButtonDown"
+                    MouseMove="PreviewCanvas_MouseMove"
+                    MouseLeftButtonUp="PreviewCanvas_MouseLeftButtonUp"
+                    MouseLeave="PreviewCanvas_MouseLeave"/>
+          </Border>
+          <Border Grid.Row="2" Background="#FFF8DE" BorderBrush="#F1DF95" BorderThickness="1" Padding="8" MinHeight="142">
+            <Grid>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+              </Grid.RowDefinitions>
+              <TextBlock Text="运行诊断与工作进度" FontWeight="SemiBold" Foreground="#735A00" Margin="1,0,1,5"/>
+              <TextBox x:Name="DiagnosticText" Grid.Row="1" IsReadOnly="True" TextWrapping="Wrap"
+                       VerticalScrollBarVisibility="Auto" Height="48" Background="Transparent"
+                       BorderThickness="0" Foreground="#735A00" Padding="1"/>
+              <TextBox x:Name="ProgressBox" Grid.Row="2" IsReadOnly="True" TextWrapping="Wrap"
+                       VerticalScrollBarVisibility="Auto" Height="62" Background="Transparent"
+                       BorderBrush="#E7D795" BorderThickness="1" Foreground="#36454F" Padding="6" Margin="0,6,0,0"/>
+            </Grid>
+          </Border>
+        </Grid>
+      </Border>
+    </Grid>
+
+    <!-- 底部 -->
+    <Grid Grid.Row="3">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <TextBlock x:Name="StatusText" VerticalAlignment="Center" Foreground="#51606C" Text="正在准备只读 CAD 连接。"
+                 Margin="3,6,9,0" TextWrapping="Wrap"/>
+      <Button x:Name="AboutButton" Grid.Column="1" Content="关于本软件" Padding="12,5" Margin="0,6,3,0"
+              HorizontalAlignment="Right" VerticalAlignment="Center" Click="AboutButton_Click"/>
+    </Grid>
+  </Grid>
+</Window>

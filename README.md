@@ -4,6 +4,8 @@
 
 **当前版本：v1.1**
 
+> **C# / .NET 8 WPF 复刻版已发布**：单文件自包含 `RoadCurveImporter.exe`，无需安装 PowerShell 7、Python 或 Office，体感速度约为原版十倍。前往 [Releases](https://github.com/XEMPZ/RoadCurveImporter/releases) 下载，源码与构建说明见 [`csharp/`](./csharp/)。以下说明适用于原 PowerShell 版本。
+
 ## 功能特性
 
 - **只读安全边界**：不调用任何保存、修改、删除、关闭图纸的接口；AutoCAD 仅读取预选集，SouthMap/ZWCAD 的临时选择集在 `finally` 中清理。
@@ -40,6 +42,7 @@
 
 | 路径 | 说明 |
 |---|---|
+| `csharp/` | C# / .NET 8 WPF 复刻版（**当前推荐**，单文件自包含，见其 README） |
 | `RoadCurveImporter.ps1` | PowerShell 7 + WPF 主程序 |
 | `RoadCurveImporter.config.json` | 端点容差、宽松拟合阈值、Excel 小数位配置 |
 | `启动道路曲线要素导入器.cmd` | 启动入口（STA 模式） |
