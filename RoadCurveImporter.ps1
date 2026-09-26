@@ -969,7 +969,7 @@ function New-AboutTextBlock([string]$text,[double]$fontSize=12,[bool]$bold=$fals
 }
 function New-AboutButton([string]$text,[double]$left=6) {
     $button=[System.Windows.Controls.Button]::new()
-    $button.Content=$text;$button.Padding=[System.Windows.Thickness]::new(10,4)
+    $button.Content=$text;$button.Padding=[System.Windows.Thickness]::new(10,4,10,4)
     $button.Margin=[System.Windows.Thickness]::new($left,0,6,0)
     $button.VerticalAlignment=[System.Windows.VerticalAlignment]::Center
     return $button
@@ -993,7 +993,7 @@ function Show-AboutDialog {
     [System.Windows.Controls.DockPanel]::SetDock($bottomPanel,[System.Windows.Controls.Dock]::Bottom)
     $bottomPanel.HorizontalAlignment=[System.Windows.HorizontalAlignment]::Right
     $bottomPanel.Margin=[System.Windows.Thickness]::new(0,14,0,0)
-    $closeButton=New-AboutButton '关闭' 0;$closeButton.Padding=[System.Windows.Thickness]::new(18,5)
+    $closeButton=New-AboutButton '关闭' 0;$closeButton.Padding=[System.Windows.Thickness]::new(18,5,18,5)
     $closeButton.Add_Click({$about.Close()});$bottomPanel.Children.Add($closeButton)
     $dock.Children.Add($bottomPanel)
     $body=[System.Windows.Controls.StackPanel]::new()
@@ -1036,7 +1036,7 @@ function Show-AboutDialog {
     $about.ShowDialog() | Out-Null
 }
 
-Initialize-ResponsiveWindow;Update-SpiralModeUi;$Window.Add_SizeChanged({Update-ResponsiveLayout});$DetectSpiralsBox.Add_Checked({Update-SpiralModeUi});$DetectSpiralsBox.Add_Unchecked({Update-SpiralModeUi});$RefreshHostButton.Add_Click({Update-HostStatus});$HostSelector.Add_SelectionChanged({Update-HostStatus});$ImportButton.Add_Click({Run-Import $true}); $ReadButton.Add_Click({Run-Import $false}); $ReverseRouteButton.Add_Click({Reverse-PublishedRoute}); $ClearButton.Add_Click({Clear-ImportedData $true}); $DxfButton.Add_Click({try{Export-Dxf}catch{[System.Windows.MessageBox]::Show($_.Exception.Message,'导出 DXF')|Out-Null}}); $ExcelButton.Add_Click({try{Export-Excel}catch{[System.Windows.MessageBox]::Show($_.Exception.Message,'导出 Excel')|Out-Null}}); $ResetZoomButton.Add_Click({Reset-PreviewZoom}); $RestoreDefaultsButton.Add_Click({Restore-DefaultValues}); $AboutButton.Add_Click({Show-AboutDialog}); $PreviewCanvas.Add_SizeChanged({Draw-Schematic});$PreviewCanvas.Add_MouseWheel({param($sender,$eventArgs) Zoom-Preview $eventArgs});$PreviewCanvas.Add_MouseLeftButtonDown({param($sender,$eventArgs) Start-PreviewPan $eventArgs});$PreviewCanvas.Add_MouseMove({param($sender,$eventArgs) Move-PreviewPan $eventArgs});$PreviewCanvas.Add_MouseLeftButtonUp({param($sender,$eventArgs) End-PreviewPan $eventArgs});$PreviewCanvas.Add_MouseLeave({param($sender,$eventArgs) End-PreviewPan $eventArgs});$CoordinateSwapBox.Add_Checked({Refresh-DisplayOptions});$CoordinateSwapBox.Add_Unchecked({Refresh-DisplayOptions});$CurveDirectionBox.Add_Checked({Refresh-DisplayOptions});$CurveDirectionBox.Add_Unchecked({Refresh-DisplayOptions})
+Initialize-ResponsiveWindow;Update-SpiralModeUi;$Window.Add_SizeChanged({Update-ResponsiveLayout});$DetectSpiralsBox.Add_Checked({Update-SpiralModeUi});$DetectSpiralsBox.Add_Unchecked({Update-SpiralModeUi});$RefreshHostButton.Add_Click({Update-HostStatus});$HostSelector.Add_SelectionChanged({Update-HostStatus});$ImportButton.Add_Click({Run-Import $true}); $ReadButton.Add_Click({Run-Import $false}); $ReverseRouteButton.Add_Click({Reverse-PublishedRoute}); $ClearButton.Add_Click({Clear-ImportedData $true}); $DxfButton.Add_Click({try{Export-Dxf}catch{[System.Windows.MessageBox]::Show($_.Exception.Message,'导出 DXF')|Out-Null}}); $ExcelButton.Add_Click({try{Export-Excel}catch{[System.Windows.MessageBox]::Show($_.Exception.Message,'导出 Excel')|Out-Null}}); $ResetZoomButton.Add_Click({Reset-PreviewZoom}); $RestoreDefaultsButton.Add_Click({Restore-DefaultValues}); $AboutButton.Add_Click({try{Show-AboutDialog}catch{[System.Windows.MessageBox]::Show(('无法打开关于窗口：{0}' -f $_.Exception.Message),'关于本软件',[System.Windows.MessageBoxButton]::OK,[System.Windows.MessageBoxImage]::Warning)|Out-Null}}); $PreviewCanvas.Add_SizeChanged({Draw-Schematic});$PreviewCanvas.Add_MouseWheel({param($sender,$eventArgs) Zoom-Preview $eventArgs});$PreviewCanvas.Add_MouseLeftButtonDown({param($sender,$eventArgs) Start-PreviewPan $eventArgs});$PreviewCanvas.Add_MouseMove({param($sender,$eventArgs) Move-PreviewPan $eventArgs});$PreviewCanvas.Add_MouseLeftButtonUp({param($sender,$eventArgs) End-PreviewPan $eventArgs});$PreviewCanvas.Add_MouseLeave({param($sender,$eventArgs) End-PreviewPan $eventArgs});$CoordinateSwapBox.Add_Checked({Refresh-DisplayOptions});$CoordinateSwapBox.Add_Unchecked({Refresh-DisplayOptions});$CurveDirectionBox.Add_Checked({Refresh-DisplayOptions});$CurveDirectionBox.Add_Unchecked({Refresh-DisplayOptions})
 
 if($CoordinateSwapSelfTest){
     try {
